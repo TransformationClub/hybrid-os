@@ -554,4 +554,266 @@ export const orchestratorTools = {
       };
     },
   }),
+
+  createInitiative: tool({
+    description:
+      "Create a new initiative in Hybrid OS. Initiatives are strategic projects that contain work items, approvals, and a knowledge context. Use this when the user wants to start a new campaign, project, or strategic effort.",
+    inputSchema: z.object({
+      title: z.string().describe("Name of the initiative"),
+      type: z
+        .enum(["aeo-campaign", "abm-campaign", "custom"])
+        .default("custom")
+        .describe("Type of initiative"),
+      goal: z.string().optional().describe("Primary goal or objective"),
+      brief: z.string().optional().describe("Context, background, or detailed brief"),
+    }),
+    execute: async ({ title, type, goal, brief }) => {
+      if (!isSupabaseConfigured) {
+        const id = `init_mock_${Date.now()}`;
+        return {
+          success: true,
+          initiative: { id, title, type, goal, status: "draft", created_at: new Date().toISOString() },
+          message: `Initiative "${title}" created successfully. Navigate to /initiatives/${id} to view it.`,
+        };
+      }
+
+      const supabase = await createClient();
+      // Get the current user's workspace from session
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { success: false, error: "Not authenticated" };
+
+      // Get the user's first workspace
+      const { data: membership } = await supabase
+        .from("workspace_memberships")
+        .select("workspace_id")
+        .eq("user_id", user.id)
+        .limit(1)
+        .single();
+
+      if (!membership) return { success: false, error: "No workspace found" };
+
+      const { data, error } = await supabase
+        .from("initiatives")
+        .insert({
+          workspace_id: membership.workspace_id,
+          title,
+          type,
+          status: "draft",
+          goal: goal ?? "",
+          brief: brief ?? null,
+          created_by: user.id,
+        })
+        .select()
+        .single();
+
+      if (error || !data) return { success: false, error: error?.message ?? "Failed to create initiative" };
+
+      return {
+        success: true,
+        initiative: data,
+        message: `Initiative "${title}" created successfully. Navigate to /initiatives/${data.id} to view it.`,
+      };
+    },
+  }),
+
+  listInitiatives: tool({
+    description:
+      "List all initiatives in the workspace. Use this to show the user what initiatives exist, or to look up an initiative ID before linking or updating it.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      if (!isSupabaseConfigured) {
+        return {
+          success: true,
+          initiatives: [
+            { id: "init-001", title: "Q2 AEO Content Campaign", type: "aeo-campaign", status: "active", goal: "Increase AI search visibility" },
+            { id: "init-002", title: "ABM Q2 — Enterprise", type: "abm-campaign", status: "planning", goal: "Close 5 enterprise accounts" },
+          ],
+          count: 2,
+        };
+      }
+
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { success: false, error: "Not authenticated" };
+
+      const { data: membership } = await supabase
+        .from("workspace_memberships")
+        .select("workspace_id")
+        .eq("user_id", user.id)
+        .limit(1)
+        .single();
+
+      if (!membership) return { success: false, error: "No workspace found" };
+
+      const { data, error } = await supabase
+        .from("initiatives")
+        .select("id, title, type, status, goal")
+        .eq("workspace_id", membership.workspace_id)
+        .neq("status", "archived")
+        .order("created_at", { ascending: false });
+
+      if (error) return { success: false, error: error.message };
+
+      return {
+        success: true,
+        initiatives: data ?? [],
+        count: data?.length ?? 0,
+      };
+    },
+  }),
+
+  manageSkill: tool({
+    description:
+      "Create, update, or list skills in Hybrid OS. Skills are reusable workflows that define how agents complete specific types of work (e.g. writing a blog post, running an ABM sequence). Use this when the user wants to build, edit, or view skills.",
+    inputSchema: z.object({
+      action: z
+        .enum(["create", "update", "list"])
+        .describe("Action to perform"),
+      skillId: z.string().optional().describe("Required for 'update'"),
+      name: z.string().optional().describe("Skill name"),
+      purpose: z.string().optional().describe("What this skill is designed to accomplish"),
+      description: z.string().optional().describe("Additional description"),
+      qualityBar: z.string().optional().describe("Quality standards for outputs"),
+      escalationRules: z.string().optional().describe("When to escalate to a human"),
+    }),
+    execute: async ({ action, skillId, name, purpose, description, qualityBar, escalationRules }) => {
+      if (!isSupabaseConfigured) {
+        if (action === "list") {
+          return { success: true, skills: [{ id: "skill-mock-1", name: "Blog Post Writing", purpose: "Write SEO-optimised blog posts", isActive: true }], count: 1 };
+        }
+        const id = `skill_mock_${Date.now()}`;
+        return { success: true, skill: { id, name, purpose }, message: `Skill "${name}" ${action === "create" ? "created" : "updated"}.` };
+      }
+
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { success: false, error: "Not authenticated" };
+
+      const { data: membership } = await supabase
+        .from("workspace_memberships")
+        .select("workspace_id")
+        .eq("user_id", user.id)
+        .limit(1)
+        .single();
+
+      if (!membership) return { success: false, error: "No workspace found" };
+
+      if (action === "list") {
+        const { data, error } = await supabase
+          .from("skills")
+          .select("id, name, purpose, is_active")
+          .eq("workspace_id", membership.workspace_id)
+          .order("name");
+        if (error) return { success: false, error: error.message };
+        return { success: true, skills: data ?? [], count: data?.length ?? 0 };
+      }
+
+      if (action === "create") {
+        if (!name || !purpose) return { success: false, error: "name and purpose are required to create a skill" };
+        const { data, error } = await supabase
+          .from("skills")
+          .insert({ workspace_id: membership.workspace_id, name, purpose, description: description ?? null, workflow: [], agents: [], tools: [], quality_bar: qualityBar ?? null, escalation_rules: escalationRules ?? null, is_active: true })
+          .select()
+          .single();
+        if (error || !data) return { success: false, error: error?.message ?? "Failed to create skill" };
+        return { success: true, skill: data, message: `Skill "${name}" created. Navigate to /skills/${data.id} to configure its workflow.` };
+      }
+
+      if (action === "update") {
+        if (!skillId) return { success: false, error: "skillId is required for update" };
+        const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+        if (name !== undefined) updates.name = name;
+        if (purpose !== undefined) updates.purpose = purpose;
+        if (description !== undefined) updates.description = description;
+        if (qualityBar !== undefined) updates.quality_bar = qualityBar;
+        if (escalationRules !== undefined) updates.escalation_rules = escalationRules;
+        const { data, error } = await supabase.from("skills").update(updates).eq("id", skillId).select().single();
+        if (error || !data) return { success: false, error: error?.message ?? "Failed to update skill" };
+        return { success: true, skill: data, message: "Skill updated successfully." };
+      }
+
+      return { success: false, error: "Invalid action" };
+    },
+  }),
+
+  manageAgent: tool({
+    description:
+      "Create, update, or list AI agents in Hybrid OS. Agents are configured personas with specific roles, tools, and system prompts that execute work. Use this when the user wants to build, edit, or view agents.",
+    inputSchema: z.object({
+      action: z
+        .enum(["create", "update", "list"])
+        .describe("Action to perform"),
+      agentId: z.string().optional().describe("Required for 'update'"),
+      name: z.string().optional().describe("Agent name"),
+      role: z.string().optional().describe("Agent role/function (e.g. 'Content Writer', 'Campaign Strategist')"),
+      description: z.string().optional().describe("What this agent does"),
+      systemPrompt: z.string().optional().describe("System prompt / instructions for the agent"),
+      riskLevel: z
+        .enum(["low", "medium", "high"])
+        .optional()
+        .describe("Risk level for agent actions"),
+      canExecute: z.boolean().optional().describe("Whether the agent can execute actions autonomously"),
+      requiresApproval: z.boolean().optional().describe("Whether actions require human approval"),
+    }),
+    execute: async ({ action, agentId, name, role, description, systemPrompt, riskLevel, canExecute, requiresApproval }) => {
+      if (!isSupabaseConfigured) {
+        if (action === "list") {
+          return { success: true, agents: [{ id: "agent-mock-1", name: "Campaign Strategist", role: "strategist", riskLevel: "low", isActive: true }], count: 1 };
+        }
+        const id = `agent_mock_${Date.now()}`;
+        return { success: true, agent: { id, name, role }, message: `Agent "${name}" ${action === "create" ? "created" : "updated"}.` };
+      }
+
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { success: false, error: "Not authenticated" };
+
+      const { data: membership } = await supabase
+        .from("workspace_memberships")
+        .select("workspace_id")
+        .eq("user_id", user.id)
+        .limit(1)
+        .single();
+
+      if (!membership) return { success: false, error: "No workspace found" };
+
+      if (action === "list") {
+        const { data, error } = await supabase
+          .from("agents")
+          .select("id, name, role, risk_level, is_active")
+          .eq("workspace_id", membership.workspace_id)
+          .order("name");
+        if (error) return { success: false, error: error.message };
+        return { success: true, agents: data ?? [], count: data?.length ?? 0 };
+      }
+
+      if (action === "create") {
+        if (!name || !role) return { success: false, error: "name and role are required to create an agent" };
+        const { data, error } = await supabase
+          .from("agents")
+          .insert({ workspace_id: membership.workspace_id, name, role, description: description ?? null, risk_level: riskLevel ?? "low", can_execute: canExecute ?? false, requires_approval: requiresApproval ?? true, tools: [], system_prompt: systemPrompt ?? null, is_active: true })
+          .select()
+          .single();
+        if (error || !data) return { success: false, error: error?.message ?? "Failed to create agent" };
+        return { success: true, agent: data, message: `Agent "${name}" created. Navigate to /agents/${data.id} to configure it.` };
+      }
+
+      if (action === "update") {
+        if (!agentId) return { success: false, error: "agentId is required for update" };
+        const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+        if (name !== undefined) updates.name = name;
+        if (role !== undefined) updates.role = role;
+        if (description !== undefined) updates.description = description;
+        if (riskLevel !== undefined) updates.risk_level = riskLevel;
+        if (canExecute !== undefined) updates.can_execute = canExecute;
+        if (requiresApproval !== undefined) updates.requires_approval = requiresApproval;
+        if (systemPrompt !== undefined) updates.system_prompt = systemPrompt;
+        const { data, error } = await supabase.from("agents").update(updates).eq("id", agentId).select().single();
+        if (error || !data) return { success: false, error: error?.message ?? "Failed to update agent" };
+        return { success: true, agent: data, message: "Agent updated successfully." };
+      }
+
+      return { success: false, error: "Invalid action" };
+    },
+  }),
 };

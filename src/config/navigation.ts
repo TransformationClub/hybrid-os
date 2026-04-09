@@ -7,6 +7,7 @@ import {
   Settings,
   BarChart3,
   ShieldCheck,
+  Users2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -19,6 +20,7 @@ export interface NavItem {
 
 export const mainNavItems: NavItem[] = [
   { label: "Home", href: "/", icon: Home },
+  { label: "Collaborate", href: "/collaborate", icon: Users2 },
   { label: "Approvals", href: "/approvals", icon: ShieldCheck },
   { label: "Initiatives", href: "/initiatives", icon: Rocket },
   { label: "Second Brain", href: "/brain", icon: Brain },
